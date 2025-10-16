@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>2 MIC DASHBOARD</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; background:#f4f6f8; }
+    header {
+      background: #003366;
+      color: white;
+      text-align: center;
+      padding: 15px;
+      font-size: 26px;
+      font-weight: bold;
+      letter-spacing: 1px;
+    }
+    nav { background: #007bff; color: white; display: flex; }
+    nav button { flex: 1; padding: 10px; cursor: pointer; border: none; background: #007bff; color: white; font-weight: bold; }
+    nav button.active { background: #0056b3; }
+    section { display: none; padding: 10px; height: calc(100vh - 130px); overflow-y: auto; }
+    section.active { display: block; }
+    #map { height: 100%; width: 100%; }
+    input, select, textarea, button { width: 100%; margin: 5px 0; padding: 8px; border-radius: 4px; border: 1px solid #ccc; }
+    button.submit-btn { background: #007bff; color: white; border: none; cursor: pointer; }
+    button.submit-btn:hover { background: #0056b3; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border: 1px solid #ccc; padding: 6px; text-align: left; }
+    th { background: #007bff; color: white; }
+    .filter-btn { background: #007bff; color: white; border: none; padding: 6px 10px; margin: 2px; border-radius: 4px; cursor: pointer; }
+    .filter-btn.active { background: #0056b3; }
+    tr:hover { background-color: #e2e6ea; cursor: pointer; }
+
+    /* Incident Summary Cards */
+    .summary-container {
+      display: flex;
+      gap: 15px;
+      margin: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .summary-card {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+      padding: 15px;
+      text-align: center;
+      width: 180px;
+    }
+    .summary-card h3 { margin: 5px 0; color: #007bff; }
+    .summary-card p { font-size: 20px; font-weight: bold; margin: 0; }
+  </style>
+</head>
+<body>
+
+<header>EAGLE EYE - 2MIC</header>
+
+<nav>
+  <button id="tab-map" class="active">Map View</button>
+  <button id="tab-add">Add Incident</button>
+</nav>
+
+<!-- MAP PAGE -->
+<section id="page-map" class="active">
+  <!-- Incident Summary Cards -->
+  <div class="summary-container" id="summaryCards"></div>
+
+  <div style="display:flex; height:85%;">
+    <div id="map" style="flex:3;"></div>
+    <div style="flex:1; padding:10px; overflow-y:auto; background:#f8f9fa; border-left:1px solid #ccc;">
+      <h3>Incident Summary (Table View)</h3>
+      <div id="buttons"></div>
+      <table id="summaryTable">
+        <thead>
+          <tr><th>Category</th><th>Count</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <h3>Incident Details</h3>
+      <table id="detailsTable">
+        <thead>
+          <tr>
+            <th>SER</th><th>Date</th><th>Location</th><th>Description</th><th>Action</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- DATA ENTRY PAGE -->
+<section id="page-add">
+  <h2>Add New Incident</h2>
+  <form id="incidentForm">
+    <label>SER:</label>
+    <input type="text" name="SER" required>
+    <label>Date:</label>
+    <input type="date" name="DATE" required>
+    <label>Category:</label>
+    <select name="CATEGORY" required>
+      <option value="Protest">Protest</option>
+      <option value="Commemoration">Commemoration</option>
+      <option value="Meetings">Meetings</option>
+      <option value="Delegation Visits">Delegation Visits</option>
+      <option value="Others">Others</option>
+    </select>
+    <label>Location Name:</label>
+    <input type="text" name="LOCATION" required>
+    <label>Latitude:</label>
+    <input type="text" name="LAT" required>
+    <label>Longitude:</label>
+    <input type="text" name="LON" required>
+    <label>Description:</label>
+    <textarea name="DESCRIPTION" rows="4" required></textarea>
+    <button type="submit" class="submit-btn">Add Incident</button>
+  </form>
+  <div id="formMessage" style="margin-top:10px; font-weight:bold;"></div>
+</section>
+
+<script>
+  // -------- Tabs ----------
+  const tabMap = document.getElementById('tab-map');
+  const tabAdd = document.getElementById('tab-add');
+  const pageMap = document.getElementById('page-map');
+  const pageAdd = document.getElementById('page-add');
+
+  tabMap.onclick = () => { tabMap.classList.add('active'); tabAdd.classList.remove('active'); pageMap.classList.add('active'); pageAdd.classList.remove('active'); };
+  tabAdd.onclick = () => { tabAdd.classList.add('active'); tabMap.classList.remove('active'); pageAdd.classList.add('active'); pageMap.classList.remove('active'); };
+
+  // -------- MAP ----------
+  var map = L.map('map').setView([7.8731, 80.7718], 8);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
+
+  let allData = [];
+  let markers = [];
+  const categoryColors = {
+    "Protest": "red",
+    "Commemoration": "purple",
+    "Meetings": "blue",
+    "Delegation Visits": "green",
+    "Others": "orange"
+  };
+
+  function loadMapData() {
+    fetch('get_data.php')
+      .then(resp => resp.json())
+      .then(data => {
+        allData = data.map(row => { if (!categoryColors[row.CATEGORY]) row.CATEGORY="Others"; return row; });
+        updateSummary(allData);
+        plotMarkers(allData);
+      })
+      .catch(err => console.error(err));
+  }
+
+  function plotMarkers(data){
+    markers.forEach(m => map.removeLayer(m.marker)); markers=[];
+    data.forEach(row=>{
+      if(row.LAT && row.LON){
+        const color=categoryColors[row.CATEGORY]||categoryColors["Others"];
+        const marker=L.circleMarker([parseFloat(row.LAT),parseFloat(row.LON)],{radius:8,fillColor:color,color:"#000",weight:1,opacity:1,fillOpacity:0.8}).addTo(map);
+        marker.bindPopup(`<b>SER:</b> ${row.SER}<br><b>Date:</b> ${row.DATE}<br><b>Category:</b> ${row.CATEGORY}<br><b>Location:</b> ${row.LOCATION}<br><b>Description:</b> ${row.DESCRIPTION}`);
+        markers.push({marker:marker,data:row});
+      }
+    });
+  }
+
+  function updateSummary(data){
+    const summary={};
+    data.forEach(row=>{summary[row.CATEGORY]=(summary[row.CATEGORY]||0)+1;});
+    
+    // Update summary table
+    const tbody=document.querySelector('#summaryTable tbody');
+    tbody.innerHTML='';
+    Object.entries(summary).forEach(([cat,count])=>{
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td>${cat}</td><td>${count}</td>`;
+      tbody.appendChild(tr);
+    });
+
+    // Update summary cards
+    const total = data.length;
+    const container = document.getElementById('summaryCards');
+    container.innerHTML = '';
+    const totalCard = `<div class="summary-card"><h3>Total Incidents</h3><p>${total}</p></div>`;
+    container.innerHTML += totalCard;
+    Object.entries(summary).forEach(([cat,count])=>{
+      container.innerHTML += `<div class="summary-card"><h3>${cat}</h3><p>${count}</p></div>`;
+    });
+
+    // Update filter buttons
+    const btnDiv=document.getElementById('buttons');
+    btnDiv.innerHTML='';
+    const allBtn=document.createElement('button');
+    allBtn.textContent='All';
+    allBtn.className='filter-btn active';
+    allBtn.onclick=(e)=>filterCategory('All',e);
+    btnDiv.appendChild(allBtn);
+    Object.keys(categoryColors).forEach(cat=>{
+      const btn=document.createElement('button');
+      btn.textContent=cat;
+      btn.className='filter-btn';
+      btn.onclick=(e)=>filterCategory(cat,e);
+      btnDiv.appendChild(btn);
+    });
+
+    updateDetails(data);
+  }
+
+  function filterCategory(cat,event){
+    document.querySelectorAll('.filter-btn').forEach(btn=>btn.classList.remove('active'));
+    event.target.classList.add('active');
+    const filtered=cat==='All'?allData:allData.filter(d=>d.CATEGORY===cat);
+    plotMarkers(filtered);
+    updateDetails(filtered);
+  }
+
+  function updateDetails(data){
+    const tbody = document.querySelector('#detailsTable tbody');
+    tbody.innerHTML='';
+    data.forEach(row=>{
+      const tr=document.createElement('tr');
+      tr.innerHTML=`
+        <td>${row.SER}</td>
+        <td>${row.DATE}</td>
+        <td>${row.LOCATION}</td>
+        <td>${row.DESCRIPTION.substring(0,100)}...</td>
+        <td><button onclick="deleteIncident('${row.SER}')">Delete</button></td>
+      `;
+      tr.onclick=(e)=>{
+        if(e.target.tagName!=="BUTTON"){
+          map.setView([parseFloat(row.LAT),parseFloat(row.LON)],12);
+          markers.forEach(m=>{if(m.data.SER===row.SER){m.marker.openPopup();}});
+        }
+      };
+      tbody.appendChild(tr);
+    });
+  }
+
+  function deleteIncident(SER){
+    if(!confirm("Are you sure you want to delete this incident?")) return;
+    fetch('delete_incident.php',{
+      method:'POST',
+      headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body:`SER=${encodeURIComponent(SER)}`
+    }).then(resp=>resp.text()).then(msg=>{
+      alert(msg);
+      loadMapData();
+    }).catch(err=>alert('Error deleting incident'));
+  }
+
+  loadMapData();
+
+  // -------- FORM SUBMISSION ----------
+  const form = document.getElementById('incidentForm');
+  form.onsubmit = (e)=>{
+    e.preventDefault();
+    const formData = new FormData(form);
+    fetch('save_incident.php',{
+      method:'POST',
+      body:formData
+    }).then(resp=>resp.text()).then(msg=>{
+      document.getElementById('formMessage').innerHTML=msg;
+      form.reset();
+      loadMapData();
+    }).catch(err=>document.getElementById('formMessage').innerHTML='Error saving incident.');
+  }
+</script>
+
+</body>
+</html>
